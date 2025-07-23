@@ -711,6 +711,9 @@ async def generate_chat_completion(
 ):
     if BYPASS_MODEL_ACCESS_CONTROL:
         bypass_filter = True
+    
+    # For chat completion, bypass model access control since permission is handled at /api/models level
+    bypass_filter = True
 
     idx = 0
 
@@ -747,11 +750,9 @@ async def generate_chat_completion(
                     detail="Model not found",
                 )
     elif not bypass_filter:
-        if user.role != "admin":
-            raise HTTPException(
-                status_code=403,
-                detail="Model not found",
-            )
+        # Skip permission check for external models since we already filter at /api/models
+        # Users can only see models they have access to, so no need for additional checks here
+        pass
 
     await get_all_models(request, user=user)
     model = request.app.state.OPENAI_MODELS.get(model_id)

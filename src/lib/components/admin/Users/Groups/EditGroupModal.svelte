@@ -58,6 +58,9 @@
 			web_search: true,
 			image_generation: true,
 			code_interpreter: true
+		},
+		models: {
+			allowed_models: []
 		}
 	};
 	export let userIds = [];

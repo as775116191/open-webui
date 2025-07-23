@@ -361,6 +361,11 @@ from open_webui.config import (
     ENABLE_LDAP_GROUP_MANAGEMENT,
     ENABLE_LDAP_GROUP_CREATION,
     LDAP_ATTRIBUTE_FOR_GROUPS,
+    # Token Usage Control
+    ENABLE_TOKEN_USAGE_CONTROL,
+    TOKEN_INITIAL_AMOUNT,
+    TOKEN_REPLENISH_INTERVAL,
+    TOKEN_REPLENISH_AMOUNT,
     # Misc
     ENV,
     CACHE_DIR,
@@ -435,6 +440,10 @@ from open_webui.utils.chat import (
     generate_chat_completion as chat_completion_handler,
     chat_completed as chat_completed_handler,
     chat_action as chat_action_handler,
+)
+from open_webui.utils.token_usage import (
+    check_and_consume_tokens_before_request,
+    raise_insufficient_tokens_error,
 )
 from open_webui.utils.embeddings import generate_embeddings
 from open_webui.utils.middleware import process_chat_payload, process_chat_response
@@ -725,6 +734,12 @@ app.state.config.LDAP_CIPHERS = LDAP_CIPHERS
 app.state.config.ENABLE_LDAP_GROUP_MANAGEMENT = ENABLE_LDAP_GROUP_MANAGEMENT
 app.state.config.ENABLE_LDAP_GROUP_CREATION = ENABLE_LDAP_GROUP_CREATION
 app.state.config.LDAP_ATTRIBUTE_FOR_GROUPS = LDAP_ATTRIBUTE_FOR_GROUPS
+
+# Token Usage Control
+app.state.config.ENABLE_TOKEN_USAGE_CONTROL = ENABLE_TOKEN_USAGE_CONTROL
+app.state.config.TOKEN_INITIAL_AMOUNT = TOKEN_INITIAL_AMOUNT
+app.state.config.TOKEN_REPLENISH_INTERVAL = TOKEN_REPLENISH_INTERVAL
+app.state.config.TOKEN_REPLENISH_AMOUNT = TOKEN_REPLENISH_AMOUNT
 
 
 app.state.AUTH_TRUSTED_EMAIL_HEADER = WEBUI_AUTH_TRUSTED_EMAIL_HEADER
@@ -1237,8 +1252,32 @@ async def get_models(
     request: Request, refresh: bool = False, user=Depends(get_verified_user)
 ):
     def get_filtered_models(models, user):
+        # 获取用户组权限过滤
+        from open_webui.models.groups import Groups
+        
+        user_groups = Groups.get_groups_by_member_id(user.id)
+        log.debug(f"User {user.id} belongs to {len(user_groups)} groups")
+        
+        # 收集所有用户组的allowed_models
+        allowed_models = set()
+        has_model_restrictions = False
+        
+        for group in user_groups:
+            log.debug(f"Checking group: {group.name}, permissions: {group.permissions}")
+            if group.permissions and 'models' in group.permissions and 'allowed_models' in group.permissions['models']:
+                allowed_model_list = group.permissions['models']['allowed_models']
+                log.debug(f"Group {group.name} allowed models: {allowed_model_list}")
+                if allowed_model_list:  # 如果列表不为空，说明有限制
+                    has_model_restrictions = True
+                    allowed_models.update(allowed_model_list)
+        
+        log.debug(f"Has model restrictions: {has_model_restrictions}, allowed models: {allowed_models}")
+        
         filtered_models = []
         for model in models:
+            # 原有的访问控制检查
+            has_access_permission = False
+            
             if model.get("arena"):
                 if has_access(
                     user.id,
@@ -1247,14 +1286,26 @@ async def get_models(
                     .get("meta", {})
                     .get("access_control", {}),
                 ):
-                    filtered_models.append(model)
-                continue
-
-            model_info = Models.get_model_by_id(model["id"])
-            if model_info:
-                if user.id == model_info.user_id or has_access(
-                    user.id, type="read", access_control=model_info.access_control
-                ):
+                    has_access_permission = True
+            else:
+                model_info = Models.get_model_by_id(model["id"])
+                if model_info:
+                    if user.id == model_info.user_id or has_access(
+                        user.id, type="read", access_control=model_info.access_control
+                    ):
+                        has_access_permission = True
+                else:
+                    # 如果是外部模型（如ollama、openai等），默认允许访问
+                    has_access_permission = True
+            
+            # 应用访问权限和用户组模型限制
+            if has_access_permission:
+                if has_model_restrictions:
+                    # 如果有模型限制，检查模型是否在允许列表中
+                    if model["id"] in allowed_models:
+                        filtered_models.append(model)
+                else:
+                    # 没有模型限制，保留模型
                     filtered_models.append(model)
 
         return filtered_models
@@ -1344,8 +1395,15 @@ async def chat_completion(
     form_data: dict,
     user=Depends(get_verified_user),
 ):
+    
+    # For chat completion, bypass model access control since permission is handled at /api/models level
+    bypass_model_access = True
+    
     if not request.app.state.MODELS:
-        await get_all_models(request, user=user)
+        # Use admin user to get all models for chat completion
+        from open_webui.models.users import Users
+        admin_user = Users.get_super_admin_user()
+        await get_all_models(request, user=admin_user if admin_user else user)
 
     model_item = form_data.pop("model_item", {})
     tasks = form_data.pop("background_tasks", None)
@@ -1354,14 +1412,42 @@ async def chat_completion(
     try:
         if not model_item.get("direct", False):
             model_id = form_data.get("model", None)
+            
             if model_id not in request.app.state.MODELS:
-                raise Exception("Model not found")
+                # Check if model exists in OPENAI_MODELS first
+                found_in_openai = False
+                if hasattr(request.app.state, 'OPENAI_MODELS') and request.app.state.OPENAI_MODELS:
+                    if model_id in request.app.state.OPENAI_MODELS:
+                        # Copy the model from OPENAI_MODELS to MODELS
+                        if not request.app.state.MODELS:
+                            request.app.state.MODELS = {}
+                        request.app.state.MODELS[model_id] = request.app.state.OPENAI_MODELS[model_id]
+                        found_in_openai = True
+                
+                if not found_in_openai:
+                    # Try to refresh models and check again
+                    try:
+                        # Force a model refresh
+                        all_models_response = await get_models(request, refresh=True, user=user)
+                        
+                        # Check OPENAI_MODELS again after refresh
+                        if hasattr(request.app.state, 'OPENAI_MODELS') and request.app.state.OPENAI_MODELS:
+                            if model_id in request.app.state.OPENAI_MODELS:
+                                if not request.app.state.MODELS:
+                                    request.app.state.MODELS = {}
+                                request.app.state.MODELS[model_id] = request.app.state.OPENAI_MODELS[model_id]
+                                found_in_openai = True
+                    except Exception as e:
+                        log.debug(f"Error during model refresh: {e}")
+                
+                if not found_in_openai:
+                    raise Exception("Model not found")
 
             model = request.app.state.MODELS[model_id]
             model_info = Models.get_model_by_id(model_id)
 
             # Check if user has access to the model
-            if not BYPASS_MODEL_ACCESS_CONTROL and user.role == "user":
+            if not BYPASS_MODEL_ACCESS_CONTROL and not bypass_model_access and user.role == "user":
                 try:
                     check_model_access(user, model)
                 except Exception as e:
@@ -1421,6 +1507,16 @@ async def chat_completion(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+    # Check if user has sufficient tokens before making the request
+    if not check_and_consume_tokens_before_request(user, estimated_tokens=100):
+        raise_insufficient_tokens_error()
+
+    # Add stream_options for token usage tracking if streaming is enabled and token usage control is active
+    from open_webui.utils.token_usage import is_token_usage_enabled
+    if is_token_usage_enabled() and form_data.get("stream", False) and user.role != "admin":
+        if "stream_options" not in form_data:
+            form_data["stream_options"] = {"include_usage": True}
 
     try:
         response = await chat_completion_handler(request, form_data, user)

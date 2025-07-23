@@ -324,11 +324,34 @@ def check_model_access(user, model):
     else:
         model_info = Models.get_model_by_id(model.get("id"))
         if not model_info:
-            raise Exception("Model not found")
-        elif not (
-            user.id == model_info.user_id
-            or has_access(
-                user.id, type="read", access_control=model_info.access_control
-            )
-        ):
-            raise Exception("Model not found")
+            # This might be an external model (like OpenAI), check user group permissions
+            
+            # Check if user has group-based model permissions
+            from open_webui.models.groups import Groups
+            user_groups = Groups.get_groups_by_member_id(user.id)
+            
+            # Collect all allowed models from user groups
+            allowed_models = set()
+            has_model_restrictions = False
+            
+            for group in user_groups:
+                if group.permissions and 'models' in group.permissions and 'allowed_models' in group.permissions['models']:
+                    allowed_model_list = group.permissions['models']['allowed_models']
+                    if allowed_model_list:  # If list is not empty, there are restrictions
+                        has_model_restrictions = True
+                        allowed_models.update(allowed_model_list)
+            
+            
+            # If there are restrictions and the model is not in the allowed list, deny access
+            if has_model_restrictions and model.get("id") not in allowed_models:
+                raise Exception("Model not found")
+            # If no restrictions or model is allowed, access is granted for external models
+        else:
+            # Database model, check standard access control
+            if not (
+                user.id == model_info.user_id
+                or has_access(
+                    user.id, type="read", access_control=model_info.access_control
+                )
+            ):
+                raise Exception("Model not found")

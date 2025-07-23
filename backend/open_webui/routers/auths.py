@@ -50,6 +50,7 @@ from open_webui.utils.auth import (
 )
 from open_webui.utils.webhook import post_webhook
 from open_webui.utils.access_control import get_permissions
+from open_webui.utils.token_usage import initialize_user_tokens
 
 from typing import Optional, List
 
@@ -644,6 +645,12 @@ async def signup(request: Request, response: Response, form_data: SignupForm):
                 user.id, request.app.state.config.USER_PERMISSIONS
             )
 
+            # Initialize user tokens if token usage control is enabled
+            try:
+                initialize_user_tokens(user.id)
+            except Exception as e:
+                log.warning(f"Failed to initialize tokens for user {user.id}: {e}")
+
             if user_count == 0:
                 # Disable signup after the first user is created
                 request.app.state.config.ENABLE_SIGNUP = False
@@ -749,6 +756,12 @@ async def add_user(form_data: AddUserForm, user=Depends(get_admin_user)):
         )
 
         if user:
+            # Initialize user tokens if token usage control is enabled
+            try:
+                initialize_user_tokens(user.id)
+            except Exception as e:
+                log.warning(f"Failed to initialize tokens for user {user.id}: {e}")
+
             token = create_token(data={"id": user.id})
             return {
                 "token": token,

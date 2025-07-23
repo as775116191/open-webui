@@ -12,7 +12,8 @@
 
 	import { toast } from 'svelte-sonner';
 
-	import { updateUserRole, getUsers, deleteUserById } from '$lib/apis/users';
+	import { updateUserRole, getUsers, deleteUserById, updateUserTokens, manualTokenGrant } from '$lib/apis/users';
+	import { getTokenUsageConfig } from '$lib/apis/configs';
 
 	import Pagination from '$lib/components/common/Pagination.svelte';
 	import ChatBubbles from '$lib/components/icons/ChatBubbles.svelte';
@@ -52,6 +53,23 @@
 
 	let showUserChatsModal = false;
 	let showEditUserModal = false;
+	let showTokenModal = false;
+	let selectedUserTokenData = {
+		replenish_interval: 86400,
+		replenish_amount: 5000
+	};
+	let manualTokenAmount = 1000;
+	let tokenUsageEnabled = false;
+
+	// Load token usage configuration
+	onMount(async () => {
+		try {
+			const config = await getTokenUsageConfig(localStorage.token);
+			tokenUsageEnabled = config?.ENABLE_TOKEN_USAGE_CONTROL || false;
+		} catch (err) {
+			console.error('Failed to load token usage config:', err);
+		}
+	});
 
 	const deleteUserHandler = async (id) => {
 		const res = await deleteUserById(localStorage.token, id).catch((error) => {
@@ -96,6 +114,47 @@
 		}
 	};
 
+	const updateTokensHandler = async (userId, tokenData) => {
+		try {
+			const res = await updateUserTokens(localStorage.token, userId, tokenData);
+			if (res) {
+				toast.success($i18n.t('User token settings updated successfully'));
+				
+				// Update selectedUser data immediately
+				if (selectedUser && selectedUser.id === userId) {
+					selectedUser.token_replenish_interval = tokenData.replenish_interval;
+					selectedUser.token_replenish_amount = tokenData.replenish_amount;
+				}
+				
+				// Refresh the user list
+				getUserList();
+				showTokenModal = false;
+			}
+		} catch (error) {
+			toast.error(`${error}`);
+		}
+	};
+
+	const grantTokensHandler = async (userId, amount) => {
+		try {
+			const res = await manualTokenGrant(localStorage.token, userId, amount);
+			if (res) {
+				toast.success($i18n.t('Tokens granted successfully'));
+				
+				// Update selectedUser data immediately
+				if (selectedUser && selectedUser.id === userId) {
+					selectedUser.token_balance = (selectedUser.token_balance || 0) + amount;
+				}
+				
+				// Refresh the user list
+				getUserList();
+				manualTokenAmount = 1000;
+			}
+		} catch (error) {
+			toast.error(`${error}`);
+		}
+	};
+
 	$: if (page) {
 		getUserList();
 	}
@@ -132,6 +191,109 @@
 
 {#if selectedUser}
 	<UserChatsModal bind:show={showUserChatsModal} user={selectedUser} />
+{/if}
+
+<!-- Token Management Modal -->
+{#if selectedUser && showTokenModal}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
+		<div class="bg-white dark:bg-gray-900 rounded-lg p-6 w-full max-w-md mx-4 shadow-xl">
+			<div class="flex justify-between items-center mb-4">
+				<h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+					{$i18n.t('Token 信息')} - {selectedUser.name}
+				</h2>
+				<button
+					class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+					on:click={() => (showTokenModal = false)}
+				>
+					<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+					</svg>
+				</button>
+			</div>
+
+			<div class="space-y-4">
+				<div class="text-sm text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 p-3 rounded">
+					<div class="flex justify-between">
+						<span>{$i18n.t('当前余额')}:</span>
+						<span class="font-semibold {selectedUser.token_balance <= 0 ? 'text-red-500' : 'text-green-600 dark:text-green-400'}">
+							{selectedUser.token_balance?.toLocaleString() ?? 0}
+						</span>
+					</div>
+					<div class="flex justify-between mt-1">
+						<span>{$i18n.t('总使用量')}:</span>
+						<span>{selectedUser.total_tokens_used?.toLocaleString() ?? 0}</span>
+					</div>
+				</div>
+
+				<div class="grid grid-cols-1 gap-4">
+					<div>
+						<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+							{$i18n.t('Token 补充时间间隔（秒）')}
+						</label>
+						<input
+							type="number"
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+							bind:value={selectedUserTokenData.replenish_interval}
+							min="1"
+						/>
+						<p class="text-xs text-gray-500 mt-1">{$i18n.t('Default: 86400 (24 hours)')}</p>
+					</div>
+
+					<div>
+						<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+							{$i18n.t('Token 补充数量')}
+						</label>
+						<input
+							type="number"
+							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+							bind:value={selectedUserTokenData.replenish_amount}
+							min="0"
+						/>
+						<p class="text-xs text-gray-500 mt-1">{$i18n.t('Default: 5000')}</p>
+					</div>
+
+					<hr class="border-gray-200 dark:border-gray-700" />
+
+					<div>
+						<label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+							{$i18n.t('手动 token 补充')}
+						</label>
+						<div class="flex gap-2">
+							<input
+								type="number"
+								class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+								bind:value={manualTokenAmount}
+								min="1"
+								placeholder="1000"
+							/>
+							<button
+								class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium"
+								on:click={() => grantTokensHandler(selectedUser.id, manualTokenAmount)}
+							>
+								{$i18n.t('补充')}
+							</button>
+						</div>
+						<p class="text-xs text-gray-500 mt-1">{$i18n.t('立即添加 token 到用户余额')}</p>
+					</div>
+				</div>
+
+				<div class="flex gap-2 pt-4">
+					<button
+						class="flex-1 px-4 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-900 dark:text-white rounded-md text-sm font-medium"
+						on:click={() => (showTokenModal = false)}
+					>
+						{$i18n.t('取消')}
+					</button>
+					<button
+						class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium"
+						on:click={() => updateTokensHandler(selectedUser.id, selectedUserTokenData)}
+					>
+						{$i18n.t('保存设置')}
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
 {/if}
 
 {#if ($config?.license_metadata?.seats ?? null) !== null && total && total > $config?.license_metadata?.seats}
@@ -368,6 +530,32 @@
 						</div>
 					</th>
 
+					{#if tokenUsageEnabled}
+						<th
+							scope="col"
+							class="px-3 py-1.5 cursor-pointer select-none"
+							on:click={() => setSortKey('token_balance')}
+						>
+							<div class="flex gap-1.5 items-center">
+								{$i18n.t('Token Balance')}
+
+								{#if orderBy === 'token_balance'}
+									<span class="font-normal"
+										>{#if direction === 'asc'}
+											<ChevronUp className="size-2" />
+										{:else}
+											<ChevronDown className="size-2" />
+										{/if}
+									</span>
+								{:else}
+									<span class="invisible">
+										<ChevronUp className="size-2" />
+									</span>
+								{/if}
+							</div>
+						</th>
+					{/if}
+
 					<th scope="col" class="px-3 py-2 text-right" />
 				</tr>
 			</thead>
@@ -414,6 +602,31 @@
 						</td>
 
 						<td class=" px-3 py-1"> {user.oauth_sub ?? ''} </td>
+
+						{#if tokenUsageEnabled}
+							<td class="px-3 py-1">
+								<div class="flex items-center gap-2">
+									<span class="{user.token_balance <= 0 ? 'text-red-500' : 'text-green-600 dark:text-green-400'}">
+										{user.role === 'admin' ? '∞' : (user.token_balance ?? 0).toLocaleString()}
+									</span>
+									{#if user.role !== 'admin'}
+										<button
+											class="px-1 py-0.5 text-xs bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 rounded"
+											on:click={() => {
+												selectedUser = user;
+												selectedUserTokenData = {
+													replenish_interval: user.token_replenish_interval ?? 86400,
+													replenish_amount: user.token_replenish_amount ?? 5000
+												};
+												showTokenModal = true;
+											}}
+										>
+											{$i18n.t('Manage')}
+										</button>
+									{/if}
+								</div>
+							</td>
+						{/if}
 
 						<td class="px-3 py-1 text-right">
 							<div class="flex justify-end w-full">

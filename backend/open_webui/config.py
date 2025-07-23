@@ -3244,3 +3244,31 @@ LDAP_ATTRIBUTE_FOR_GROUPS = PersistentConfig(
     "ldap.server.attribute_for_groups",
     os.environ.get("LDAP_ATTRIBUTE_FOR_GROUPS", "memberOf"),
 )
+
+####################################
+# TOKEN USAGE CONTROL
+####################################
+
+ENABLE_TOKEN_USAGE_CONTROL = PersistentConfig(
+    "ENABLE_TOKEN_USAGE_CONTROL",
+    "token_usage.enable",
+    os.environ.get("ENABLE_TOKEN_USAGE_CONTROL", "False").lower() == "true",
+)
+
+TOKEN_INITIAL_AMOUNT = PersistentConfig(
+    "TOKEN_INITIAL_AMOUNT",
+    "token_usage.initial_amount",
+    int(os.environ.get("TOKEN_INITIAL_AMOUNT", "10000")),
+)
+
+TOKEN_REPLENISH_INTERVAL = PersistentConfig(
+    "TOKEN_REPLENISH_INTERVAL",
+    "token_usage.replenish_interval",
+    int(os.environ.get("TOKEN_REPLENISH_INTERVAL", "86400")),  # 24 hours in seconds
+)
+
+TOKEN_REPLENISH_AMOUNT = PersistentConfig(
+    "TOKEN_REPLENISH_AMOUNT",
+    "token_usage.replenish_amount",
+    int(os.environ.get("TOKEN_REPLENISH_AMOUNT", "5000")),
+)

@@ -198,13 +198,39 @@ class ModelsTable:
     def get_models_by_user_id(
         self, user_id: str, permission: str = "write"
     ) -> list[ModelUserResponse]:
+        # 避免循环导入，在函数内部导入
+        from open_webui.models.groups import Groups
+        
         models = self.get_models()
-        return [
-            model
-            for model in models
-            if model.user_id == user_id
-            or has_access(user_id, permission, model.access_control)
-        ]
+        
+        # 获取用户所属的用户组
+        user_groups = Groups.get_groups_by_member_id(user_id)
+        
+        # 收集所有用户组的allowed_models
+        allowed_models = set()
+        has_model_restrictions = False
+        
+        for group in user_groups:
+            if group.permissions and 'models' in group.permissions and 'allowed_models' in group.permissions['models']:
+                allowed_model_list = group.permissions['models']['allowed_models']
+                if allowed_model_list:  # 如果列表不为空，说明有限制
+                    has_model_restrictions = True
+                    allowed_models.update(allowed_model_list)
+        
+        # 过滤模型
+        filtered_models = []
+        for model in models:
+            # 检查基本权限（原有逻辑）
+            if model.user_id == user_id or has_access(user_id, permission, model.access_control):
+                # 如果有模型限制，进一步检查模型是否在允许列表中
+                if has_model_restrictions:
+                    if model.id in allowed_models:
+                        filtered_models.append(model)
+                else:
+                    # 没有模型限制，保留模型
+                    filtered_models.append(model)
+        
+        return filtered_models
 
     def get_model_by_id(self, id: str) -> Optional[ModelModel]:
         try:

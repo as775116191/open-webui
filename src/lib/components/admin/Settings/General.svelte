@@ -10,6 +10,7 @@
 		updateLdapConfig,
 		updateLdapServer
 	} from '$lib/apis/auths';
+	import { getTokenUsageConfig, updateTokenUsageConfig } from '$lib/apis/configs';
 	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
@@ -50,6 +51,14 @@
 		ciphers: ''
 	};
 
+	// Token Usage Control variables
+	let tokenUsageConfig = {
+		ENABLE_TOKEN_USAGE_CONTROL: false,
+		TOKEN_INITIAL_AMOUNT: 10000,
+		TOKEN_REPLENISH_INTERVAL: 86400,
+		TOKEN_REPLENISH_AMOUNT: 5000
+	};
+
 	const checkForVersionUpdates = async () => {
 		updateAvailable = null;
 		version = await getVersionUpdates(localStorage.token).catch((error) => {
@@ -81,6 +90,7 @@
 		const res = await updateAdminConfig(localStorage.token, adminConfig);
 		await updateLdapConfig(localStorage.token, ENABLE_LDAP);
 		await updateLdapServerHandler();
+		await updateTokenUsageConfig(localStorage.token, tokenUsageConfig);
 
 		if (res) {
 			saveHandler();
@@ -104,6 +114,22 @@
 			})(),
 			(async () => {
 				LDAP_SERVER = await getLdapServer(localStorage.token);
+			})(),
+			(async () => {
+				try {
+					const config = await getTokenUsageConfig(localStorage.token);
+					if (config) {
+						tokenUsageConfig = {
+							ENABLE_TOKEN_USAGE_CONTROL: config.ENABLE_TOKEN_USAGE_CONTROL ?? false,
+							TOKEN_INITIAL_AMOUNT: config.TOKEN_INITIAL_AMOUNT ?? 10000,
+							TOKEN_REPLENISH_INTERVAL: config.TOKEN_REPLENISH_INTERVAL ?? 86400,
+							TOKEN_REPLENISH_AMOUNT: config.TOKEN_REPLENISH_AMOUNT ?? 5000
+						};
+					}
+				} catch (error) {
+					console.error('Failed to load token usage config:', error);
+					// Keep the default values from initialization
+				}
 			})()
 		]);
 
@@ -703,6 +729,105 @@
 								bind:value={webhookUrl}
 							/>
 						</div>
+					</div>
+
+					<div class="mb-3">
+						<div class=" mb-2.5 text-base font-medium">{$i18n.t('Token 使用控制')}</div>
+
+						<hr class=" border-gray-100 dark:border-gray-850 my-2" />
+
+						<div class="  mb-2.5 flex w-full justify-between">
+							<div class=" self-center text-xs font-medium">
+								<Tooltip
+									content={$i18n.t(
+										'启用 token 使用控制以限制用户消耗，并随时间自动补充令牌'
+									)}
+									placement="top-start"
+								>
+									{$i18n.t('启用 token 使用控制')}
+								</Tooltip>
+							</div>
+							<div class="flex items-center relative">
+								<Switch bind:state={tokenUsageConfig.ENABLE_TOKEN_USAGE_CONTROL} />
+							</div>
+						</div>
+
+						{#if tokenUsageConfig.ENABLE_TOKEN_USAGE_CONTROL}
+							<div class="  mb-2.5 flex w-full justify-between">
+								<div class=" self-center text-xs font-medium">
+									<Tooltip
+										content={$i18n.t(
+											'新用户初始 token 数量'
+										)}
+										placement="top-start"
+									>
+										{$i18n.t('初始 token 数量')}
+									</Tooltip>
+								</div>
+								<div class="flex items-center relative">
+									<input
+										class="flex-1 w-full text-sm bg-transparent outline-hidden"
+										type="number"
+										placeholder="10000"
+										bind:value={tokenUsageConfig.TOKEN_INITIAL_AMOUNT}
+										autocomplete="off"
+										min="0"
+									/>
+								</div>
+							</div>
+
+							<div class="  mb-2.5 flex w-full justify-between">
+								<div class=" self-center text-xs font-medium">
+									<Tooltip
+										content={$i18n.t(
+											'Token 补充时间间隔（秒）（例如：86400 = 24小时）'
+										)}
+										placement="top-start"
+									>
+										{$i18n.t('Token 补充时间间隔（秒）')}
+									</Tooltip>
+								</div>
+								<div class="flex items-center relative">
+									<input
+										class="flex-1 w-full text-sm bg-transparent outline-hidden"
+										type="number"
+										placeholder="86400"
+										bind:value={tokenUsageConfig.TOKEN_REPLENISH_INTERVAL}
+										autocomplete="off"
+										min="0"
+									/>
+								</div>
+							</div>
+
+							<div class="  mb-2.5 flex w-full justify-between">
+								<div class=" self-center text-xs font-medium">
+									<Tooltip
+										content={$i18n.t(
+											'Token 补充数量'
+										)}
+										placement="top-start"
+									>
+										{$i18n.t('Token 补充数量')}
+									</Tooltip>
+								</div>
+								<div class="flex items-center relative">
+									<input
+										class="flex-1 w-full text-sm bg-transparent outline-hidden"
+										type="number"
+										placeholder="5000"
+										bind:value={tokenUsageConfig.TOKEN_REPLENISH_AMOUNT}
+										autocomplete="off"
+										min="0"
+									/>
+								</div>
+							</div>
+
+							<div class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+								{$i18n.t(
+									'注意：管理员用户拥有无限 token。Token 使用在每次成功聊天完成后根据实际模型使用情况扣除。'
+								)}
+							</div>
+						{/if}
 					</div>
 				</div>
 			</div>

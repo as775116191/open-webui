@@ -16,6 +16,12 @@ export default defineConfig({
 			]
 		})
 	],
+	server: {
+		port: 7173,
+		watch: {
+			ignored: ['**/backend/.venv/**', '**/node_modules/**', '**/.venv/**']
+		}
+	},
 	define: {
 		APP_VERSION: JSON.stringify(process.env.npm_package_version),
 		APP_BUILD_HASH: JSON.stringify(process.env.APP_BUILD_HASH || 'dev-build')

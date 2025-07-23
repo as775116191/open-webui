@@ -186,11 +186,21 @@ async def generate_chat_completion(
         models = request.app.state.MODELS
 
     model_id = form_data["model"]
-    if model_id not in models:
-        raise Exception("Model not found")
+    model = None
+    
+    # Check in MODELS first
+    if model_id in models:
+        model = models[model_id]
+    else:
+        # Check in OPENAI_MODELS if not found in MODELS
+        if hasattr(request.app.state, 'OPENAI_MODELS') and request.app.state.OPENAI_MODELS and model_id in request.app.state.OPENAI_MODELS:
+            model = request.app.state.OPENAI_MODELS[model_id]
+            # Also add to MODELS for future use
+            models[model_id] = model
+        else:
+            raise Exception("Model not found")
 
-    model = models[model_id]
-
+    
     if getattr(request.state, "direct", False):
         return await generate_direct_chat_completion(
             request, form_data, user=user, models=models

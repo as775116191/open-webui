@@ -35,6 +35,13 @@ class User(Base):
     settings = Column(JSONField, nullable=True)
     info = Column(JSONField, nullable=True)
 
+    # Token usage control fields
+    token_balance = Column(BigInteger, nullable=False, default=0)
+    last_token_replenish_time = Column(BigInteger, nullable=True)
+    total_tokens_used = Column(BigInteger, nullable=False, default=0)
+    token_replenish_interval = Column(BigInteger, nullable=True)
+    token_replenish_amount = Column(BigInteger, nullable=True)
+
     oauth_sub = Column(Text, unique=True)
 
 
@@ -58,6 +65,13 @@ class UserModel(BaseModel):
     api_key: Optional[str] = None
     settings: Optional[UserSettings] = None
     info: Optional[dict] = None
+
+    # Token usage control fields
+    token_balance: int = 0
+    last_token_replenish_time: Optional[int] = None
+    total_tokens_used: int = 0
+    token_replenish_interval: Optional[int] = None
+    token_replenish_amount: Optional[int] = None
 
     oauth_sub: Optional[str] = None
 
@@ -411,6 +425,91 @@ class UsersTable:
                 return UserModel.model_validate(user)
             else:
                 return None
+
+    # Token usage control methods
+    def update_user_token_balance_by_id(self, id: str, token_balance: int) -> bool:
+        try:
+            with get_db() as db:
+                result = db.query(User).filter_by(id=id).update({"token_balance": token_balance})
+                db.commit()
+                return True if result == 1 else False
+        except Exception:
+            return False
+
+    def deduct_user_tokens_by_id(self, id: str, tokens_used: int) -> bool:
+        try:
+            with get_db() as db:
+                user = db.query(User).filter_by(id=id).first()
+                if user:
+                    # Always deduct the full amount, balance can go negative
+                    user.token_balance -= tokens_used
+                    user.total_tokens_used += tokens_used
+                    db.commit()
+                    return True
+                return False
+        except Exception:
+            return False
+
+    def replenish_user_tokens_by_id(self, id: str, replenish_amount: int, current_time: int) -> bool:
+        try:
+            with get_db() as db:
+                user = db.query(User).filter_by(id=id).first()
+                if user:
+                    user.token_balance += replenish_amount
+                    user.last_token_replenish_time = current_time
+                    db.commit()
+                    return True
+                return False
+        except Exception:
+            return False
+
+    def can_user_consume_tokens(self, id: str, tokens_needed: int, replenish_interval: int, replenish_amount: int) -> tuple[bool, bool]:
+        """
+        Check if user can consume tokens.
+        Returns (can_consume, was_replenished)
+        """
+        import time
+        
+        try:
+            with get_db() as db:
+                user = db.query(User).filter_by(id=id).first()
+                if not user:
+                    return False, False
+
+                current_time = int(time.time())
+                was_replenished = False
+
+                # Check if user needs token replenishment (when balance is 0 or negative)
+                if (user.token_balance <= 0 and 
+                    (user.last_token_replenish_time is None or 
+                     current_time - user.last_token_replenish_time >= replenish_interval)):
+                    # Replenish tokens
+                    user.token_balance += replenish_amount
+                    user.last_token_replenish_time = current_time
+                    db.commit()
+                    was_replenished = True
+
+                # As long as balance is positive (after potential replenishment), user can consume
+                can_consume = user.token_balance > 0
+                return can_consume, was_replenished
+        except Exception:
+            return False, False
+
+    def initialize_user_tokens(self, id: str, initial_amount: int) -> bool:
+        """Initialize user tokens when account is created"""
+        import time
+        
+        try:
+            with get_db() as db:
+                result = db.query(User).filter_by(id=id).update({
+                    "token_balance": initial_amount,
+                    "last_token_replenish_time": int(time.time()),
+                    "total_tokens_used": 0
+                })
+                db.commit()
+                return True if result == 1 else False
+        except Exception:
+            return False
 
 
 Users = UsersTable()

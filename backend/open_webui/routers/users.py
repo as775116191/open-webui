@@ -455,3 +455,114 @@ async def delete_user_by_id(user_id: str, user=Depends(get_admin_user)):
         status_code=status.HTTP_403_FORBIDDEN,
         detail=ERROR_MESSAGES.ACTION_PROHIBITED,
     )
+
+
+############################
+# Token Management
+############################
+
+
+class UserTokenUpdateForm(BaseModel):
+    token_balance: Optional[int] = None
+    replenish_interval: Optional[int] = None
+    replenish_amount: Optional[int] = None
+
+
+@router.post("/{user_id}/tokens", response_model=Optional[UserModel])
+async def update_user_tokens(
+    user_id: str,
+    form_data: UserTokenUpdateForm,
+    session_user=Depends(get_admin_user),
+):
+    """
+    Update user token settings (replenish interval and amount).
+    """
+    user = Users.get_user_by_id(user_id)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.USER_NOT_FOUND,
+        )
+    
+    # Admin users have unlimited tokens, so we skip token management for them
+    if user.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Admin users have unlimited tokens",
+        )
+    
+    update_data = {}
+    if form_data.token_balance is not None:
+        update_data["token_balance"] = form_data.token_balance
+    if form_data.replenish_interval is not None:
+        update_data["token_replenish_interval"] = form_data.replenish_interval
+    if form_data.replenish_amount is not None:
+        update_data["token_replenish_amount"] = form_data.replenish_amount
+    
+    updated_user = Users.update_user_by_id(user_id, update_data)
+    
+    if updated_user:
+        return updated_user
+    
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=ERROR_MESSAGES.DEFAULT(),
+    )
+
+
+class TokenGrantForm(BaseModel):
+    amount: int
+
+
+@router.post("/{user_id}/tokens/grant", response_model=Optional[UserModel])
+async def grant_tokens_to_user(
+    user_id: str,
+    form_data: TokenGrantForm,
+    session_user=Depends(get_admin_user),
+):
+    """
+    Manually grant tokens to a user and update their replenish time.
+    """
+    import time
+    
+    user = Users.get_user_by_id(user_id)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ERROR_MESSAGES.USER_NOT_FOUND,
+        )
+    
+    # Admin users have unlimited tokens, so we skip token granting for them
+    if user.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Admin users have unlimited tokens",
+        )
+    
+    if form_data.amount <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token amount must be positive",
+        )
+    
+    current_balance = user.token_balance or 0
+    new_balance = current_balance + form_data.amount
+    current_time = int(time.time())
+    
+    updated_user = Users.update_user_by_id(
+        user_id,
+        {
+            "token_balance": new_balance,
+            "last_token_replenish_time": current_time,
+        }
+    )
+    
+    if updated_user:
+        return updated_user
+    
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=ERROR_MESSAGES.DEFAULT(),
+    )

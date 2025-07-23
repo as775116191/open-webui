@@ -25,6 +25,7 @@ from starlette.responses import Response, StreamingResponse
 from open_webui.models.chats import Chats
 from open_webui.models.folders import Folders
 from open_webui.models.users import Users
+from open_webui.utils.token_usage import consume_tokens_after_response
 from open_webui.socket.main import (
     get_event_call,
     get_event_emitter,
@@ -1283,6 +1284,14 @@ async def process_chat_response(
                         }
                     )
 
+                    # Consume tokens based on actual usage for non-streaming response
+                    usage = response.get("usage", {})
+                    if usage:
+                        try:
+                            consume_tokens_after_response(user, usage)
+                        except Exception as e:
+                            log.error(f"Error consuming tokens for user {user.id}: {e}")
+                            
                     title = Chats.get_chat_title_by_id(metadata["chat_id"])
 
                     await event_emitter(
@@ -1405,6 +1414,9 @@ async def process_chat_response(
 
         # Handle as a background task
         async def response_handler(response, events):
+            # Variable to collect usage information from streaming response
+            collected_usage = {}
+            
             def serialize_content_blocks(content_blocks, raw=False):
                 content = ""
 
@@ -1821,6 +1833,7 @@ async def process_chat_response(
 
                         try:
                             data = json.loads(data)
+                            print(f"DEBUG STREAM LOOP: Processing data: {data}")
 
                             data, _ = await process_filter_functions(
                                 request=request,
@@ -1858,6 +1871,8 @@ async def process_chat_response(
                                             )
                                         usage = data.get("usage", {})
                                         if usage:
+                                            # Collect usage information for later token consumption
+                                            collected_usage.update(usage)
                                             await event_emitter(
                                                 {
                                                     "type": "chat:completion",
@@ -2432,6 +2447,13 @@ async def process_chat_response(
                         except Exception as e:
                             log.debug(e)
                             break
+
+                # Consume tokens based on collected usage from streaming response
+                if collected_usage:
+                    try:
+                        consume_tokens_after_response(user, collected_usage)
+                    except Exception as e:
+                        log.error(f"Error consuming tokens for user {user.id}: {e}")
 
                 title = Chats.get_chat_title_by_id(metadata["chat_id"])
                 data = {
