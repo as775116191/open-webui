@@ -327,3 +327,44 @@ async def get_banners(
     user=Depends(get_verified_user),
 ):
     return request.app.state.config.BANNERS
+
+
+############################
+# Token Usage Config
+############################
+
+
+class TokenUsageConfigForm(BaseModel):
+    ENABLE_TOKEN_USAGE_CONTROL: bool
+    TOKEN_INITIAL_AMOUNT: int
+    TOKEN_REPLENISH_INTERVAL: int
+    TOKEN_REPLENISH_AMOUNT: int
+
+
+@router.get("/token_usage", response_model=TokenUsageConfigForm)
+async def get_token_usage_config(request: Request, user=Depends(get_admin_user)):
+    return {
+        "ENABLE_TOKEN_USAGE_CONTROL": request.app.state.config.ENABLE_TOKEN_USAGE_CONTROL,
+        "TOKEN_INITIAL_AMOUNT": request.app.state.config.TOKEN_INITIAL_AMOUNT,
+        "TOKEN_REPLENISH_INTERVAL": request.app.state.config.TOKEN_REPLENISH_INTERVAL,
+        "TOKEN_REPLENISH_AMOUNT": request.app.state.config.TOKEN_REPLENISH_AMOUNT,
+    }
+
+
+@router.post("/token_usage", response_model=TokenUsageConfigForm)
+async def set_token_usage_config(
+    request: Request,
+    form_data: TokenUsageConfigForm,
+    user=Depends(get_admin_user),
+):
+    request.app.state.config.ENABLE_TOKEN_USAGE_CONTROL = form_data.ENABLE_TOKEN_USAGE_CONTROL
+    request.app.state.config.TOKEN_INITIAL_AMOUNT = form_data.TOKEN_INITIAL_AMOUNT
+    request.app.state.config.TOKEN_REPLENISH_INTERVAL = form_data.TOKEN_REPLENISH_INTERVAL
+    request.app.state.config.TOKEN_REPLENISH_AMOUNT = form_data.TOKEN_REPLENISH_AMOUNT
+
+    return {
+        "ENABLE_TOKEN_USAGE_CONTROL": request.app.state.config.ENABLE_TOKEN_USAGE_CONTROL,
+        "TOKEN_INITIAL_AMOUNT": request.app.state.config.TOKEN_INITIAL_AMOUNT,
+        "TOKEN_REPLENISH_INTERVAL": request.app.state.config.TOKEN_REPLENISH_INTERVAL,
+        "TOKEN_REPLENISH_AMOUNT": request.app.state.config.TOKEN_REPLENISH_AMOUNT,
+    }
